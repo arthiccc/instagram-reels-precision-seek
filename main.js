@@ -37,7 +37,10 @@
         'text-shadow:0 1px 3px rgba(0,0,0,0.6);opacity:0;transition:opacity 0.15s}',
         '.ghost-seek-bar:hover ~ .ghost-time{opacity:1}',
         'video[data-ghost-seek] ~ .ghost-time{opacity:0}',
-        '.ghost-time.ghost-visible{opacity:1}'
+        '.ghost-time.ghost-visible{opacity:1}',
+        '.ghost-duration{display:inline-flex;align-items:center;justify-content:center;',
+        'margin-right:8px;font-family:', CFG.FONT, ';color:#f5f5f5;font-size:13px;',
+        'font-weight:400;user-select:none}'
     ].join('');
 
     function injectCSS() {
@@ -169,6 +172,38 @@
     }
 
     /* ═══════════════════════════════════════════════════════════════════
+       ACTION BAR — find save button area for duration display
+       ═══════════════════════════════════════════════════════════════════ */
+    function findActionBar(video) {
+        var scope = video.closest('div[role="dialog"]')
+                 || video.closest('article');
+        if (!scope) return null;
+        var saveSvg = scope.querySelector(
+            'svg[aria-label="Save"], svg[aria-label="Remove"]'
+        );
+        if (!saveSvg) return null;
+        var btn = saveSvg.closest('div[role="button"]');
+        return btn ? btn.parentElement : null;
+    }
+
+    function injectDuration(video, actionBar) {
+        if (!actionBar || actionBar.querySelector('.ghost-duration')) return;
+        var el = document.createElement('div');
+        el.className = 'ghost-duration';
+        el.textContent = formatTime(video.duration);
+        var saveDiv = actionBar.querySelector(
+            'svg[aria-label="Save"], svg[aria-label="Remove"]'
+        );
+        if (saveDiv) {
+            var saveBtn = saveDiv.closest('div[role="button"]');
+            if (saveBtn) actionBar.insertBefore(el, saveBtn);
+            else actionBar.appendChild(el);
+        } else {
+            actionBar.appendChild(el);
+        }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
        INJECT — Rule 5: assertions, Rule 6: small scope, Rule 9: shallow
        ═══════════════════════════════════════════════════════════════════ */
     function injectUI(video) {
@@ -189,10 +224,16 @@
 
         var onTimeUpdate = function () {
             updateSeekBar(ui, video);
+            var actionBar = findActionBar(video);
+            if (actionBar) {
+                var dur = actionBar.querySelector('.ghost-duration');
+                if (dur) dur.textContent = formatTime(video.duration);
+            }
         };
 
         var isDragging = false;
         var activePtrId = -1;
+        var wasPlaying = false;
 
         function seek(clientX) {
             var rect = ui.bar.getBoundingClientRect();
@@ -206,6 +247,8 @@
             e.stopPropagation();
             isDragging = true;
             activePtrId = e.pointerId;
+            wasPlaying = !video.paused;
+            if (wasPlaying) video.pause();
             seek(e.clientX);
             ui.bar.setPointerCapture(e.pointerId);
         }, { passive: false });
@@ -220,6 +263,7 @@
         ui.bar.addEventListener('pointerup', function (e) {
             isDragging = false;
             ui.bar.releasePointerCapture(e.pointerId);
+            if (wasPlaying) video.play();
         }, { passive: false });
 
         ui.bar.addEventListener('pointerenter', function () {
@@ -238,18 +282,30 @@
         });
 
         updateSeekBar(ui, video);
+
+        var actionBar = findActionBar(video);
+        injectDuration(video, actionBar);
     }
 
     /* ═══════════════════════════════════════════════════════════════════
        KEYBOARD — Rule 1: single handler, no memory leak
        ═══════════════════════════════════════════════════════════════════ */
     function handleKeydown(e) {
-        if (!e.shiftKey) return;
         var tag = e.target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
         var video = getActiveVideo();
         if (!video) return;
+
+        if (e.key === ' ') {
+            e.preventDefault();
+            e.stopPropagation();
+            if (video.paused) video.play();
+            else video.pause();
+            return;
+        }
+
+        if (!e.shiftKey) return;
 
         e.preventDefault();
         e.stopPropagation();

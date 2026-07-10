@@ -26,7 +26,7 @@
        CSS — injected once at startup
        ═══════════════════════════════════════════════════════════════════ */
     var CSS = [
-        '.ghost-seek-bar{position:absolute;bottom:0;left:0;width:100%;height:3px;padding-top:17px;',
+        '.ghost-seek-bar{position:absolute;bottom:0;left:0;width:100%;height:3px;',
         'background:rgba(255,255,255,0.2);z-index:', CFG.Z_INDEX, ';cursor:pointer;',
         'transition:height 0.1s;pointer-events:auto}',
         '.ghost-seek-bar:hover{height:6px}',
@@ -191,28 +191,51 @@
             updateSeekBar(ui, video);
         };
 
-        var onBarDown = function (e) {
+        var isDragging = false;
+        var activePtrId = -1;
+
+        function seek(clientX) {
+            var rect = ui.bar.getBoundingClientRect();
+            var w = rect.width;
+            if (w === 0) return;
+            video.currentTime = ((clientX - rect.left) / w) * video.duration;
+        }
+
+        ui.bar.addEventListener('pointerdown', function (e) {
             e.preventDefault();
             e.stopPropagation();
-            var rect = ui.bar.getBoundingClientRect();
-            var width = rect.width;
-            if (width === 0) return;
-            var ratio = (e.clientX - rect.left) / width;
-            video.currentTime = ratio * video.duration;
-        };
+            isDragging = true;
+            activePtrId = e.pointerId;
+            seek(e.clientX);
+            ui.bar.setPointerCapture(e.pointerId);
+        }, { passive: false });
 
-        var onBarEnter = function () {
+        ui.bar.addEventListener('pointermove', function (e) {
+            if (!isDragging || e.pointerId !== activePtrId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            seek(e.clientX);
+        }, { passive: false });
+
+        ui.bar.addEventListener('pointerup', function (e) {
+            isDragging = false;
+            ui.bar.releasePointerCapture(e.pointerId);
+        }, { passive: false });
+
+        ui.bar.addEventListener('pointerenter', function () {
             ui.time.classList.add('ghost-visible');
-        };
+        });
 
-        var onBarLeave = function () {
+        ui.bar.addEventListener('pointerleave', function () {
             ui.time.classList.remove('ghost-visible');
-        };
+        });
 
         video.addEventListener('timeupdate', onTimeUpdate);
-        ui.bar.addEventListener('mousedown', onBarDown);
-        ui.bar.addEventListener('mouseenter', onBarEnter);
-        ui.bar.addEventListener('mouseleave', onBarLeave);
+
+        ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend',
+         'pointerdown', 'pointerup', 'pointercancel'].forEach(function (evt) {
+            ui.bar.addEventListener(evt, function (e) { e.stopPropagation(); }, true);
+        });
 
         updateSeekBar(ui, video);
     }
@@ -227,6 +250,9 @@
 
         var video = getActiveVideo();
         if (!video) return;
+
+        e.preventDefault();
+        e.stopPropagation();
 
         if (e.key === 'ArrowRight') {
             video.currentTime += CFG.SEEK_STEP_S;

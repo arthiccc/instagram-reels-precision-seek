@@ -39,8 +39,8 @@
         'video[data-ghost-seek] ~ .ghost-time{opacity:0}',
         '.ghost-time.ghost-visible{opacity:1}',
         '.ghost-duration{display:inline-flex;align-items:center;justify-content:center;',
-        'margin-right:8px;font-family:', CFG.FONT, ';color:#f5f5f5;font-size:13px;',
-        'font-weight:400;user-select:none}'
+        'margin-right:8px;font-family:', CFG.FONT, ';color:rgba(255,255,255,0.5);font-size:11px;',
+        'font-weight:500;letter-spacing:0.5px;user-select:none}'
     ].join('');
 
     function injectCSS() {

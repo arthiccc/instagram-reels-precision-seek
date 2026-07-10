@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Instagram Reels Precision-Seek
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
+// @version      3.2.1
 // @description  Seek bar + time display for Instagram Reels. NASA Power of 10 refactored.
 // @author       arthiccc
 // @match        https://www.instagram.com/*
@@ -39,7 +39,7 @@
         'video[data-ghost-seek] ~ .ghost-time{opacity:0}',
         '.ghost-time.ghost-visible{opacity:1}',
         '.ghost-duration{display:inline-flex;align-items:center;justify-content:center;',
-        'margin-right:8px;font-family:', CFG.FONT, ';color:rgba(255,255,255,0.5);font-size:11px;',
+        'margin:0 4px 0 -2px;font-family:', CFG.FONT, ';color:rgba(255,255,255,0.65);font-size:14px;',
         'font-weight:500;letter-spacing:0.5px;user-select:none}'
     ].join('');
 

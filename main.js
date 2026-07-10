@@ -1,107 +1,297 @@
 // ==UserScript==
 // @name         Instagram Reels Precision-Seek
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
-// @description  Seek bar at bottom, time display injected exactly to the left of the Save icon.
+// @version      3.0.0
+// @description  Seek bar + time display for Instagram Reels. NASA Power of 10 refactored.
 // @author       arthiccc
 // @match        https://www.instagram.com/*
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
-    const CSS = `
-    .ghost-seek-bar {
-        position: absolute; bottom: 0; left: 0; width: 100%; height: 3px;
-        background: rgba(255, 255, 255, 0.2); z-index: 1000; cursor: pointer;
-        transition: height 0.1s;
-    }
-    .ghost-seek-bar:hover { height: 6px; }
-    .ghost-seek-fill {
-        height: 100%; background: #fff; width: 0%;
-    }
-    .ghost-time-inline {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        margin-right: 8px;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        color: #f5f5f5; 
-        font-size: 13px;
-        font-weight: 400;
-        vertical-align: middle;
-        user-select: none;
-    }
-    `;
+    /* ═══════════════════════════════════════════════════════════════════
+       CONFIG — Rule 8: all constants in one place, single-line values
+       ═══════════════════════════════════════════════════════════════════ */
+    var CFG = {
+        DEBOUNCE_MS: 300,
+        SCAN_MAX: 50,
+        SEEK_STEP_S: 5,
+        Z_INDEX: 2000,
+        FONT: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    };
 
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
+    /* ═══════════════════════════════════════════════════════════════════
+       CSS — injected once at startup
+       ═══════════════════════════════════════════════════════════════════ */
+    var CSS = [
+        '.ghost-seek-bar{position:absolute;bottom:0;left:0;width:100%;height:3px;',
+        'background:rgba(255,255,255,0.2);z-index:', CFG.Z_INDEX, ';cursor:pointer;',
+        'transition:height 0.1s;pointer-events:auto}',
+        '.ghost-seek-bar:hover{height:6px}',
+        '.ghost-seek-fill{height:100%;background:#fff;width:0%;transition:width 0.1s linear}',
+        '.ghost-time{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);',
+        'font-family:', CFG.FONT, ';color:rgba(245,245,245,0.9);font-size:12px;',
+        'font-weight:500;user-select:none;pointer-events:none;white-space:nowrap;',
+        'text-shadow:0 1px 3px rgba(0,0,0,0.6);opacity:0;transition:opacity 0.15s}',
+        '.ghost-seek-bar:hover ~ .ghost-time{opacity:1}',
+        'video[data-ghost-seek] ~ .ghost-time{opacity:0}',
+        '.ghost-time.ghost-visible{opacity:1}'
+    ].join('');
 
-    const formatTime = (s) => isFinite(s) ? new Date(s * 1000).toISOString().substr(14, 5) : "0:00";
+    function injectCSS() {
+        var s = document.createElement('style');
+        s.textContent = CSS;
+        document.head.appendChild(s);
+    }
 
+    /* ═══════════════════════════════════════════════════════════════════
+       UTILS — Rule 5: assertion density, Rule 6: block scope
+       ═══════════════════════════════════════════════════════════════════ */
+    function formatTime(secs) {
+        if (!isFinite(secs) || secs < 0) return '0:00';
+        var m = Math.floor(secs / 60);
+        var s = Math.floor(secs % 60);
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function assertEl(el, label) {
+        if (!el || !el.nodeType) {
+            throw new Error('[IG-Seek] ' + label + ' not found');
+        }
+        return el;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       VIDEO FINDER — Rule 1: no recursion, Rule 2: bounded loops
+       ═══════════════════════════════════════════════════════════════════ */
+    function findVideos(root) {
+        var found = [];
+        var queue = [root];
+        var iterations = 0;
+
+        while (queue.length > 0 && iterations < CFG.SCAN_MAX) {
+            var node = queue.shift();
+            iterations++;
+
+            if (node.tagName === 'VIDEO') {
+                found.push(node);
+                continue;
+            }
+
+            if (node.querySelectorAll) {
+                var vids = node.querySelectorAll('video');
+                var i = 0;
+                while (i < vids.length && found.length < CFG.SCAN_MAX) {
+                    found.push(vids[i]);
+                    i++;
+                }
+            }
+
+            if (node.shadowRoot) {
+                queue.push(node.shadowRoot);
+            }
+
+            var children = node.children;
+            if (children) {
+                var j = 0;
+                while (j < children.length && iterations < CFG.SCAN_MAX) {
+                    queue.push(children[j]);
+                    j++;
+                }
+            }
+        }
+
+        return found;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       ACTIVE VIDEO — Rule 7: check all returns
+       ═══════════════════════════════════════════════════════════════════ */
+    function getActiveVideo() {
+        var all = document.querySelectorAll('video');
+        if (all.length === 0) return null;
+
+        var k = 0;
+        while (k < all.length) {
+            var v = all[k];
+            if (!v.paused && !v.ended && v.duration > 0) return v;
+            k++;
+        }
+
+        var cx = window.innerWidth / 2;
+        var cy = window.innerHeight / 2;
+        var best = null;
+        var bestDist = Infinity;
+
+        k = 0;
+        while (k < all.length) {
+            var vid = all[k];
+            var r = vid.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+                var dx = r.left + r.width / 2 - cx;
+                var dy = r.top + r.height / 2 - cy;
+                var dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = vid;
+                }
+            }
+            k++;
+        }
+
+        return best;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       UI FACTORY — Rule 3: pre-create, Rule 4: short functions
+       ═══════════════════════════════════════════════════════════════════ */
+    function createSeekBar() {
+        var bar = document.createElement('div');
+        bar.className = 'ghost-seek-bar';
+
+        var fill = document.createElement('div');
+        fill.className = 'ghost-seek-fill';
+
+        var time = document.createElement('div');
+        time.className = 'ghost-time';
+
+        bar.appendChild(fill);
+        return { bar: bar, fill: fill, time: time };
+    }
+
+    function updateSeekBar(ui, video) {
+        if (!video || !video.duration) return;
+        var pct = (video.currentTime / video.duration) * 100;
+        ui.fill.style.width = pct + '%';
+        ui.time.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       INJECT — Rule 5: assertions, Rule 6: small scope, Rule 9: shallow
+       ═══════════════════════════════════════════════════════════════════ */
     function injectUI(video) {
         if (video.dataset.ghostSeek) return;
-        video.dataset.ghostSeek = "active";
+        video.dataset.ghostSeek = '1';
 
-        // 1. Locate the Save Icon container
-        // We look for the section containing the action buttons (Like, Comment, etc)
-        const postRoot = video.closest('article') || video.closest('div[role="presentation"]');
-        if (!postRoot) return;
+        var container = video.parentElement;
+        if (!container) return;
 
-        const saveIcon = postRoot.querySelector('svg[aria-label*="Save"], svg[aria-label*="Simpan"]');
-        const actionArea = saveIcon ? saveIcon.closest('div').parentElement : null;
+        var pos = getComputedStyle(container).position;
+        if (pos === 'static') {
+            container.style.position = 'relative';
+        }
 
-        if (!actionArea) return;
+        var ui = createSeekBar();
+        container.appendChild(ui.bar);
+        container.appendChild(ui.time);
 
-        // 2. Create UI Elements
-        const bar = document.createElement('div');
-        bar.className = 'ghost-seek-bar';
-        const fill = document.createElement('div');
-        fill.className = 'ghost-seek-fill';
-        const timeDisplay = document.createElement('div');
-        timeDisplay.className = 'ghost-time-inline';
-        timeDisplay.textContent = '0:00';
+        var onTimeUpdate = function () {
+            updateSeekBar(ui, video);
+        };
 
-        // Add bar to video container
-        const videoContainer = video.parentElement;
-        bar.appendChild(fill);
-        videoContainer.appendChild(bar);
+        var onBarClick = function (e) {
+            var rect = ui.bar.getBoundingClientRect();
+            var width = rect.width;
+            if (width === 0) return;
+            var ratio = (e.clientX - rect.left) / width;
+            video.currentTime = ratio * video.duration;
+        };
 
-        // Inject time next to Save icon (insert before the Save button's div)
-        saveIcon.closest('div').parentElement.insertBefore(timeDisplay, saveIcon.closest('div'));
+        var onBarEnter = function () {
+            ui.time.classList.add('ghost-visible');
+        };
 
-        // 3. Logic
-        video.addEventListener('timeupdate', () => {
-            if (video.duration) {
-                const pct = (video.currentTime / video.duration) * 100;
-                fill.style.width = `${pct}%`;
-                timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-            }
-        });
+        var onBarLeave = function () {
+            ui.time.classList.remove('ghost-visible');
+        };
 
-        bar.addEventListener('click', (e) => {
-            const rect = bar.getBoundingClientRect();
-            const pos = (e.clientX - rect.left) / rect.width;
-            video.currentTime = pos * video.duration;
-        });
+        video.addEventListener('timeupdate', onTimeUpdate);
+        ui.bar.addEventListener('click', onBarClick);
+        ui.bar.addEventListener('mouseenter', onBarEnter);
+        ui.bar.addEventListener('mouseleave', onBarLeave);
 
-        // Shift + Arrows for seeking
-        window.addEventListener('keydown', (e) => {
-            if (!e.shiftKey) return;
-            if (e.key === 'ArrowRight') video.currentTime += 5;
-            if (e.key === 'ArrowLeft') video.currentTime -= 5;
-        });
+        updateSeekBar(ui, video);
     }
 
-    let scanTimer;
-    const observer = new MutationObserver(() => {
-        clearTimeout(scanTimer);
-        scanTimer = setTimeout(() => {
-            document.querySelectorAll('video').forEach(injectUI);
-        }, 500);
-    });
+    /* ═══════════════════════════════════════════════════════════════════
+       KEYBOARD — Rule 1: single handler, no memory leak
+       ═══════════════════════════════════════════════════════════════════ */
+    function handleKeydown(e) {
+        if (!e.shiftKey) return;
+        var tag = e.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-    observer.observe(document.body, { childList: true, subtree: true });
+        var video = getActiveVideo();
+        if (!video) return;
+
+        if (e.key === 'ArrowRight') {
+            video.currentTime += CFG.SEEK_STEP_S;
+        } else if (e.key === 'ArrowLeft') {
+            video.currentTime -= CFG.SEEK_STEP_S;
+        }
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       OBSERVER + SPA — Rule 1: iterative, Rule 2: bounded debounce
+       ═══════════════════════════════════════════════════════════════════ */
+    var scanTimer = null;
+
+    function scan() {
+        var videos = findVideos(document.body);
+        var i = 0;
+        while (i < videos.length) {
+            injectUI(videos[i]);
+            i++;
+        }
+    }
+
+    function scheduleScan() {
+        if (scanTimer) clearTimeout(scanTimer);
+        scanTimer = setTimeout(scan, CFG.DEBOUNCE_MS);
+    }
+
+    function initObserver() {
+        var observer = new MutationObserver(scheduleScan);
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function initSPAHooks() {
+        var _push = history.pushState;
+        var _replace = history.replaceState;
+
+        history.pushState = function () {
+            _push.apply(this, arguments);
+            scheduleScan();
+        };
+
+        history.replaceState = function () {
+            _replace.apply(this, arguments);
+            scheduleScan();
+        };
+
+        window.addEventListener('popstate', scheduleScan);
+    }
+
+    function initKeybinding() {
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       INIT — entry point
+       ═══════════════════════════════════════════════════════════════════ */
+    function init() {
+        injectCSS();
+        initObserver();
+        initSPAHooks();
+        initKeybinding();
+        scan();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();

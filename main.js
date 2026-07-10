@@ -26,7 +26,7 @@
        CSS — injected once at startup
        ═══════════════════════════════════════════════════════════════════ */
     var CSS = [
-        '.ghost-seek-bar{position:absolute;bottom:0;left:0;width:100%;height:3px;',
+        '.ghost-seek-bar{position:absolute;bottom:0;left:0;width:100%;height:3px;padding-top:17px;',
         'background:rgba(255,255,255,0.2);z-index:', CFG.Z_INDEX, ';cursor:pointer;',
         'transition:height 0.1s;pointer-events:auto}',
         '.ghost-seek-bar:hover{height:6px}',
@@ -110,7 +110,7 @@
        ACTIVE VIDEO — Rule 7: check all returns
        ═══════════════════════════════════════════════════════════════════ */
     function getActiveVideo() {
-        var all = document.querySelectorAll('video');
+        var all = findVideos(document.body);
         if (all.length === 0) return null;
 
         var k = 0;
@@ -191,7 +191,9 @@
             updateSeekBar(ui, video);
         };
 
-        var onBarClick = function (e) {
+        var onBarDown = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             var rect = ui.bar.getBoundingClientRect();
             var width = rect.width;
             if (width === 0) return;
@@ -208,7 +210,7 @@
         };
 
         video.addEventListener('timeupdate', onTimeUpdate);
-        ui.bar.addEventListener('click', onBarClick);
+        ui.bar.addEventListener('mousedown', onBarDown);
         ui.bar.addEventListener('mouseenter', onBarEnter);
         ui.bar.addEventListener('mouseleave', onBarLeave);
 
@@ -275,7 +277,7 @@
     }
 
     function initKeybinding() {
-        document.addEventListener('keydown', handleKeydown);
+        document.addEventListener('keydown', handleKeydown, true);
     }
 
     /* ═══════════════════════════════════════════════════════════════════
